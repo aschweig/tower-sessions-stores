@@ -13,12 +13,12 @@ documentation = "https://docs.rs/tower-sessions-sqlx-store"
 readme = "README.md"
 
 [features]
-sqlite = ["sqlx/sqlite", "sqlx/time"]
-postgres = ["sqlx/postgres", "sqlx/time"]
-mysql = ["sqlx/mysql", "sqlx/time"]
-sqlite-chrono = ["sqlx/sqlite", "sqlx/chrono"]
-postgres-chrono = ["sqlx/postgres", "sqlx/chrono"]
-mysql-chrono = ["sqlx/mysql", "sqlx/chrono"]
+sqlite = ["sqlx/sqlite", "sqlx/time", "dep:time"]
+postgres = ["sqlx/postgres", "sqlx/time", "dep:time"]
+mysql = ["sqlx/mysql", "sqlx/time", "dep:time"]
+sqlite-chrono = ["sqlx/sqlite", "sqlx/chrono", "dep:chrono"]
+postgres-chrono = ["sqlx/postgres", "sqlx/chrono", "dep:chrono"]
+mysql-chrono = ["sqlx/mysql", "sqlx/chrono", "dep:chrono"]
 
 
 [dependencies]
@@ -39,7 +39,7 @@ serde = "1"
 
 [[example]]
 name = "sqlite"
-required-features = ["sqlite"]
+required-features = ["sqlite" ]
 
 [[example]]
 name = "postgres"

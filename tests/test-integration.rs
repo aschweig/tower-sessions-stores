@@ -65,6 +65,27 @@ mod sqlite_store_tests {
 }
 
 #[cfg(test)]
+mod sqlite_chrono_store_tests {
+    use axum::Router;
+    use tower_sessions::SessionManagerLayer;
+    use tower_sessions_sqlx_store::{sqlx::SqlitePool, SqliteChronoStore};
+
+    use crate::common::build_app;
+
+    async fn app(max_age: Option<Duration>) -> Router {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let session_store = SqliteChronoStore::new(pool);
+        session_store.migrate().await.unwrap();
+        let session_manager = SessionManagerLayer::new(session_store).with_secure(true);
+
+        build_app(session_manager, max_age)
+    }
+
+    route_tests!(app);
+}
+
+
+#[cfg(test)]
 mod postgres_store_tests {
     use axum::Router;
     use tower_sessions::SessionManagerLayer;
@@ -83,7 +104,30 @@ mod postgres_store_tests {
     }
 
     route_tests!(app);
-}
+} 
+
+
+#[cfg(test)]
+mod postgres_chrono_store_tests {
+    use axum::Router;
+    use tower_sessions::SessionManagerLayer;
+    use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresChronoStore};
+
+    use crate::common::build_app;
+
+    async fn app(max_age: Option<Duration>) -> Router {
+        let database_url = std::option_env!("POSTGRES_URL").unwrap();
+        let pool = PgPool::connect(database_url).await.unwrap();
+        let session_store = PostgresChronoStore::new(pool);
+        session_store.migrate().await.unwrap();
+        let session_manager = SessionManagerLayer::new(session_store).with_secure(true);
+
+        build_app(session_manager, max_age)
+    }
+
+    route_tests!(app);
+} 
+
 
 #[cfg(test)]
 mod mysql_store_tests {
@@ -106,6 +150,29 @@ mod mysql_store_tests {
 
     route_tests!(app);
 }
+
+#[cfg(test)]
+mod mysql_chrono_store_tests {
+    use axum::Router;
+    use tower_sessions::SessionManagerLayer;
+    use tower_sessions_sqlx_store::{sqlx::MySqlPool, MySqlChronoStore};
+
+    use crate::common::build_app;
+
+    async fn app(max_age: Option<Duration>) -> Router {
+        let database_url = std::option_env!("MYSQL_URL").unwrap();
+
+        let pool = MySqlPool::connect(database_url).await.unwrap();
+        let session_store = MySqlChronoStore::new(pool);
+        session_store.migrate().await.unwrap();
+        let session_manager = SessionManagerLayer::new(session_store).with_secure(true);
+
+        build_app(session_manager, max_age)
+    }
+
+    route_tests!(app);
+}
+
 
 #[cfg(test)]
 mod mongodb_store_tests {

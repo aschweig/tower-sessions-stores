@@ -18,6 +18,9 @@ tower-sessions-sqlx-store = { path = "../sqlx-store/", features = [
     "sqlite",
     "mysql",
     "postgres",
+    "sqlite-chrono",
+    "mysql-chrono",
+    "postgres-chrono",
 ] }
 tower-sessions-redis-store = { path = "../redis-store/" }
 tower-sessions-mongodb-store = { path = "../mongodb-store/" }

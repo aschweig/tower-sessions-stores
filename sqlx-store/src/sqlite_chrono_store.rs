@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use sqlx::{sqlite::SqlitePool, SqliteConnection};
-use time::OffsetDateTime;
 use tower_sessions_core::{
     session::{Id, Record},
     session_store::{self, ExpiredDeletion},
@@ -11,22 +10,22 @@ use crate::SqlxStoreError;
 
 /// A SQLite session store.
 #[derive(Clone, Debug)]
-pub struct SqliteStore {
+pub struct SqliteChronoStore {
     pool: SqlitePool,
     table_name: String,
 }
 
-impl SqliteStore {
+impl SqliteChronoStore {
     /// Create a new SQLite store with the provided connection pool.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_sqlx_store::{sqlx::SqlitePool, SqliteStore};
+    /// use tower_sessions_sqlx_store::{sqlx::SqlitePool, SqliteChronoStore};
     ///
     /// # tokio_test::block_on(async {
     /// let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-    /// let session_store = SqliteStore::new(pool);
+    /// let session_store = SqliteChronoStore::new(pool);
     /// # })
     /// ```
     pub fn new(pool: SqlitePool) -> Self {
@@ -101,7 +100,7 @@ impl SqliteStore {
         sqlx::query(&query)
             .bind(record.id.to_string())
             .bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?)
-            .bind(record.expiry_date)
+            .bind(crate::convert_expiry_date(record.expiry_date))
             .execute(conn)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -111,7 +110,7 @@ impl SqliteStore {
 }
 
 #[async_trait]
-impl ExpiredDeletion for SqliteStore {
+impl ExpiredDeletion for SqliteChronoStore {
     async fn delete_expired(&self) -> session_store::Result<()> {
         let query = format!(
             r#"
@@ -129,7 +128,7 @@ impl ExpiredDeletion for SqliteStore {
 }
 
 #[async_trait]
-impl SessionStore for SqliteStore {
+impl SessionStore for SqliteChronoStore {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
         let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
 
@@ -158,7 +157,7 @@ impl SessionStore for SqliteStore {
         );
         let data: Option<(Vec<u8>,)> = sqlx::query_as(&query)
             .bind(session_id.to_string())
-            .bind(OffsetDateTime::now_utc())
+            .bind(chrono::Utc::now())
             .fetch_optional(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;

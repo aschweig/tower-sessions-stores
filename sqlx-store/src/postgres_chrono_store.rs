@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use sqlx::{PgConnection, PgPool};
-use time::OffsetDateTime;
 use tower_sessions_core::{
     session::{Id, Record},
     session_store, ExpiredDeletion, SessionStore,
@@ -10,24 +9,24 @@ use crate::SqlxStoreError;
 
 /// A PostgreSQL session store.
 #[derive(Clone, Debug)]
-pub struct PostgresStore {
+pub struct PostgresChronoStore {
     pool: PgPool,
     schema_name: String,
     table_name: String,
 }
 
-impl PostgresStore {
+impl PostgresChronoStore {
     /// Create a new PostgreSQL store with the provided connection pool.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresStore};
+    /// use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresChronoStore};
     ///
     /// # tokio_test::block_on(async {
     /// let database_url = std::option_env!("DATABASE_URL").unwrap();
     /// let pool = PgPool::connect(database_url).await.unwrap();
-    /// let session_store = PostgresStore::new(pool);
+    /// let session_store = PostgresChronoStore::new(pool);
     /// # })
     /// ```
     pub fn new(pool: PgPool) -> Self {
@@ -75,12 +74,12 @@ impl PostgresStore {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresStore};
+    /// use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresChronoStore};
     ///
     /// # tokio_test::block_on(async {
     /// let database_url = std::option_env!("DATABASE_URL").unwrap();
     /// let pool = PgPool::connect(database_url).await.unwrap();
-    /// let session_store = PostgresStore::new(pool);
+    /// let session_store = PostgresChronoStore::new(pool);
     /// session_store.migrate().await.unwrap();
     /// # })
     /// ```
@@ -160,7 +159,7 @@ impl PostgresStore {
         sqlx::query(&query)
             .bind(record.id.to_string())
             .bind(rmp_serde::to_vec(&record).map_err(SqlxStoreError::Encode)?)
-            .bind(record.expiry_date)
+            .bind(crate::convert_expiry_date(record.expiry_date))
             .execute(conn)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -170,7 +169,7 @@ impl PostgresStore {
 }
 
 #[async_trait]
-impl ExpiredDeletion for PostgresStore {
+impl ExpiredDeletion for PostgresChronoStore {
     async fn delete_expired(&self) -> session_store::Result<()> {
         let query = format!(
             r#"
@@ -189,7 +188,7 @@ impl ExpiredDeletion for PostgresStore {
 }
 
 #[async_trait]
-impl SessionStore for PostgresStore {
+impl SessionStore for PostgresChronoStore {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
         let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
 
@@ -219,7 +218,7 @@ impl SessionStore for PostgresStore {
         );
         let record_value: Option<(Vec<u8>,)> = sqlx::query_as(&query)
             .bind(session_id.to_string())
-            .bind(OffsetDateTime::now_utc())
+            .bind(chrono::Utc::now())
             .fetch_optional(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;

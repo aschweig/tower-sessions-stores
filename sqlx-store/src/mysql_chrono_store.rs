@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{PgConnection, PgPool};
-use time::OffsetDateTime;
+use sqlx::{MySqlConnection, MySqlPool};
 use tower_sessions_core::{
     session::{Id, Record},
     session_store, ExpiredDeletion, SessionStore,
@@ -8,29 +7,29 @@ use tower_sessions_core::{
 
 use crate::SqlxStoreError;
 
-/// A PostgreSQL session store.
+/// A MySQL session store.
 #[derive(Clone, Debug)]
-pub struct PostgresStore {
-    pool: PgPool,
+pub struct MySqlChronoStore {
+    pool: MySqlPool,
     schema_name: String,
     table_name: String,
 }
 
-impl PostgresStore {
-    /// Create a new PostgreSQL store with the provided connection pool.
+impl MySqlChronoStore {
+    /// Create a new MySqlChronoStore store with the provided connection pool.
     ///
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresStore};
+    /// use tower_sessions_sqlx::{sqlx::MySqlPool, MySqlChronoStore};
     ///
     /// # tokio_test::block_on(async {
     /// let database_url = std::option_env!("DATABASE_URL").unwrap();
-    /// let pool = PgPool::connect(database_url).await.unwrap();
-    /// let session_store = PostgresStore::new(pool);
+    /// let pool = MySqlPool::connect(database_url).await.unwrap();
+    /// let session_store = MySqlChronoStore::new(pool);
     /// # })
     /// ```
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: MySqlPool) -> Self {
         Self {
             pool,
             schema_name: "tower_sessions".to_string(),
@@ -75,12 +74,12 @@ impl PostgresStore {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_sqlx_store::{sqlx::PgPool, PostgresStore};
+    /// use tower_sessions_sqlx::{sqlx::MySqlPool, MySqlChronoStore};
     ///
     /// # tokio_test::block_on(async {
     /// let database_url = std::option_env!("DATABASE_URL").unwrap();
-    /// let pool = PgPool::connect(database_url).await.unwrap();
-    /// let session_store = PostgresStore::new(pool);
+    /// let pool = MySqlPool::connect(database_url).await.unwrap();
+    /// let session_store = MySqlChronoStore::new(pool);
     /// session_store.migrate().await.unwrap();
     /// # })
     /// ```
@@ -88,30 +87,18 @@ impl PostgresStore {
         let mut tx = self.pool.begin().await?;
 
         let create_schema_query = format!(
-            r#"create schema if not exists "{schema_name}""#,
+            "create schema if not exists {schema_name}",
             schema_name = self.schema_name,
         );
-        // Concurrent create schema may fail due to duplicate key violations.
-        //
-        // This works around that by assuming the schema must exist on such an error.
-        if let Err(err) = sqlx::query(&create_schema_query).execute(&mut *tx).await {
-            if !err
-                .to_string()
-                .contains("duplicate key value violates unique constraint")
-            {
-                return Err(err);
-            }
-
-            return Ok(());
-        }
+        sqlx::query(&create_schema_query).execute(&mut *tx).await?;
 
         let create_table_query = format!(
             r#"
-            create table if not exists "{schema_name}"."{table_name}"
+            create table if not exists `{schema_name}`.`{table_name}`
             (
-                id text primary key not null,
-                data bytea not null,
-                expiry_date timestamptz not null
+                id char(22) primary key not null,
+                data blob not null,
+                expiry_date timestamp(6) not null
             )
             "#,
             schema_name = self.schema_name,
@@ -124,10 +111,10 @@ impl PostgresStore {
         Ok(())
     }
 
-    async fn id_exists(&self, conn: &mut PgConnection, id: &Id) -> session_store::Result<bool> {
+    async fn id_exists(&self, conn: &mut MySqlConnection, id: &Id) -> session_store::Result<bool> {
         let query = format!(
             r#"
-            select exists(select 1 from "{schema_name}"."{table_name}" where id = $1)
+            select exists(select 1 from `{schema_name}`.`{table_name}` where id = ?)
             "#,
             schema_name = self.schema_name,
             table_name = self.table_name
@@ -142,17 +129,16 @@ impl PostgresStore {
 
     async fn save_with_conn(
         &self,
-        conn: &mut PgConnection,
+        conn: &mut MySqlConnection,
         record: &Record,
     ) -> session_store::Result<()> {
         let query = format!(
             r#"
-            insert into "{schema_name}"."{table_name}" (id, data, expiry_date)
-            values ($1, $2, $3)
-            on conflict (id) do update
-            set
-              data = excluded.data,
-              expiry_date = excluded.expiry_date
+            insert into `{schema_name}`.`{table_name}`
+              (id, data, expiry_date) values (?, ?, ?)
+            on duplicate key update
+              data = values(data),
+              expiry_date = values(expiry_date)
             "#,
             schema_name = self.schema_name,
             table_name = self.table_name
@@ -160,22 +146,21 @@ impl PostgresStore {
         sqlx::query(&query)
             .bind(record.id.to_string())
             .bind(rmp_serde::to_vec(&record).map_err(SqlxStoreError::Encode)?)
-            .bind(record.expiry_date)
+            .bind(crate::convert_expiry_date(record.expiry_date))
             .execute(conn)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
-
         Ok(())
     }
 }
 
 #[async_trait]
-impl ExpiredDeletion for PostgresStore {
+impl ExpiredDeletion for MySqlChronoStore {
     async fn delete_expired(&self) -> session_store::Result<()> {
         let query = format!(
             r#"
-            delete from "{schema_name}"."{table_name}"
-            where expiry_date < (now() at time zone 'utc')
+            delete from `{schema_name}`.`{table_name}`
+            where expiry_date < utc_timestamp()
             "#,
             schema_name = self.schema_name,
             table_name = self.table_name
@@ -189,7 +174,7 @@ impl ExpiredDeletion for PostgresStore {
 }
 
 #[async_trait]
-impl SessionStore for PostgresStore {
+impl SessionStore for MySqlChronoStore {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
         let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
 
@@ -211,20 +196,20 @@ impl SessionStore for PostgresStore {
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
         let query = format!(
             r#"
-            select data from "{schema_name}"."{table_name}"
-            where id = $1 and expiry_date > $2
+            select data from `{schema_name}`.`{table_name}`
+            where id = ? and expiry_date > ?
             "#,
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        let record_value: Option<(Vec<u8>,)> = sqlx::query_as(&query)
+        let data: Option<(Vec<u8>,)> = sqlx::query_as(&query)
             .bind(session_id.to_string())
-            .bind(OffsetDateTime::now_utc())
+            .bind(chrono::Utc::now())
             .fetch_optional(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
 
-        if let Some((data,)) = record_value {
+        if let Some((data,)) = data {
             Ok(Some(
                 rmp_serde::from_slice(&data).map_err(SqlxStoreError::Decode)?,
             ))
@@ -235,7 +220,7 @@ impl SessionStore for PostgresStore {
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
         let query = format!(
-            r#"delete from "{schema_name}"."{table_name}" where id = $1"#,
+            r#"delete from `{schema_name}`.`{table_name}` where id = ?"#,
             schema_name = self.schema_name,
             table_name = self.table_name
         );
@@ -249,10 +234,11 @@ impl SessionStore for PostgresStore {
     }
 }
 
-/// A valid PostreSQL identifier must start with a letter or underscore
+/// A valid MySQL identifier must start with a letter or underscore
 /// (including letters with diacritical marks and non-Latin letters). Subsequent
-/// characters in an identifier or key word can be letters, underscores, digits
-/// (0-9), or dollar signs ($). See https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS for details.
+/// characters in an identifier or keyword can be letters, underscores, digits
+/// (0-9), or dollar signs ($).
+/// See https://dev.mysql.com/doc/refman/8.4/en/identifiers.html for details.
 fn is_valid_identifier(name: &str) -> bool {
     !name.is_empty()
         && name
